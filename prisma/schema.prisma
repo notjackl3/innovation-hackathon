@@ -1,0 +1,128 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id          String     @id @default(cuid())
+  name        String
+  rawProfile  String
+  briefJson   String     // JSON-encoded brief (sqlite has no native JSON)
+  styleTokens String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  documents   Document[]
+  ideas       Idea[]
+}
+
+model Document {
+  id            String   @id @default(cuid())
+  companyId     String
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  kind          String
+  storageKey    String
+  filename      String
+  extractedText String?
+  summary       String?
+  createdAt     DateTime @default(now())
+}
+
+model Idea {
+  id          String               @id @default(cuid())
+  companyId   String
+  company     Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  title       String
+  rawInput    String
+  briefJson   String?
+  scoresJson  String?
+  primaryType String?
+  status      String               @default("DRAFT")
+  tracks      VisualizationTrack[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+}
+
+model VisualizationTrack {
+  id        String          @id @default(cuid())
+  ideaId    String
+  idea      Idea            @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+  kind      String
+  status    String          @default("PENDING")
+  artifacts Artifact[]
+  jobs      GenerationJob[]
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([ideaId, kind])
+}
+
+model Artifact {
+  id               String            @id @default(cuid())
+  trackId          String
+  track            VisualizationTrack @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  kind             String
+  label            String?
+  currentVersionId String?
+  versions         ArtifactVersion[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+
+model ArtifactVersion {
+  id              String           @id @default(cuid())
+  artifactId      String
+  artifact        Artifact         @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  parentVersionId String?
+  parent          ArtifactVersion? @relation("VersionTree", fields: [parentVersionId], references: [id])
+  children        ArtifactVersion[] @relation("VersionTree")
+  storageKey      String?
+  contentJson     String?
+  meta            String           @default("{}")
+  createdBy       String           @default("ai")
+  createdAt       DateTime         @default(now())
+}
+
+model GenerationJob {
+  id          String              @id @default(cuid())
+  trackId     String?
+  track       VisualizationTrack? @relation(fields: [trackId], references: [id], onDelete: SetNull)
+  kind        String
+  status      String              @default("QUEUED")
+  progress    Int                 @default(0)
+  inputJson   String
+  outputJson  String?
+  logs        String              @default("[]")
+  error       String?
+  attempts    Int                 @default(0)
+  externalRef String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime            @default(now())
+  promptLogs  PromptLog[]
+}
+
+model PromptLog {
+  id        String         @id @default(cuid())
+  jobId     String?
+  job       GenerationJob? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  provider  String
+  model     String
+  prompt    String?
+  params    String         @default("{}")
+  latencyMs Int?
+  costUsd   Float?
+  result    String?
+  createdAt DateTime       @default(now())
+}
+
+model SharedDemo {
+  id        String   @id @default(cuid())
+  trackId   String
+  slug      String   @unique
+  bundleId  String
+  createdAt DateTime @default(now())
+}
