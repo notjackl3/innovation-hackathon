@@ -36,13 +36,18 @@ export function ServiceWorkspace({
   const [artifacts, setArtifacts] = useState(initialArtifacts);
   const [planJob, setPlanJob] = useState<string | null>(null);
   const [frameJob, setFrameJob] = useState<string | null>(null);
+  const [allFramesJob, setAllFramesJob] = useState<string | null>(null);
   const [narrJob, setNarrJob] = useState<string | null>(null);
   const [videoJob, setVideoJob] = useState<string | null>(null);
+  const [addSceneJob, setAddSceneJob] = useState<string | null>(null);
+  const [addSceneHint, setAddSceneHint] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const planJ = useJob(planJob);
   const frameJ = useJob(frameJob);
+  const allFramesJ = useJob(allFramesJob);
   const narrJ = useJob(narrJob);
   const videoJ = useJob(videoJob);
+  const addSceneJ = useJob(addSceneJob);
 
   const planArtifact = useMemo(() => artifacts.find((a) => a.kind === "SCENE_PLAN"), [artifacts]);
   const videoArtifact = useMemo(() => artifacts.find((a) => a.kind === "VIDEO"), [artifacts]);
@@ -61,10 +66,24 @@ export function ServiceWorkspace({
   const videoVersion = videoArtifact?.versions.find((v) => v.id === videoArtifact.currentVersionId) ?? videoArtifact?.versions[0];
 
   useEffect(() => {
-    if (planJ?.status === "SUCCEEDED" || frameJ?.status === "SUCCEEDED" || narrJ?.status === "SUCCEEDED" || videoJ?.status === "SUCCEEDED") {
+    if (
+      planJ?.status === "SUCCEEDED" ||
+      frameJ?.status === "SUCCEEDED" ||
+      allFramesJ?.status === "SUCCEEDED" ||
+      narrJ?.status === "SUCCEEDED" ||
+      videoJ?.status === "SUCCEEDED" ||
+      addSceneJ?.status === "SUCCEEDED"
+    ) {
       void refresh();
     }
-  }, [planJ?.status, frameJ?.status, narrJ?.status, videoJ?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [planJ?.status, frameJ?.status, allFramesJ?.status, narrJ?.status, videoJ?.status, addSceneJ?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // While GEN_ALL_FRAMES runs, refresh periodically so the storyboard fills in scene-by-scene.
+  useEffect(() => {
+    if (!allFramesJob || allFramesJ?.status === "SUCCEEDED" || allFramesJ?.status === "FAILED") return;
+    const t = setInterval(() => void refresh(), 3000);
+    return () => clearInterval(t);
+  }, [allFramesJob, allFramesJ?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function refresh() {
     const res = await fetch(`/api/tracks/${trackId}`);
@@ -90,6 +109,18 @@ export function ServiceWorkspace({
     if (!res.ok) return;
     const { jobId } = (await res.json()) as { jobId: string };
     setPlanJob(jobId);
+  }
+
+  async function renderAllFrames(force = false) {
+    if (!planArtifact) return;
+    const res = await fetch(`/api/tracks/${trackId}/service/frames/all`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scenePlanArtifactId: planArtifact.id, force }),
+    });
+    if (!res.ok) return;
+    const { jobId } = (await res.json()) as { jobId: string };
+    setAllFramesJob(jobId);
   }
   async function generateFrame(sceneIndex: number) {
     if (!planArtifact) return;
@@ -123,6 +154,18 @@ export function ServiceWorkspace({
     if (!res.ok) return;
     const { jobId } = (await res.json()) as { jobId: string };
     setVideoJob(jobId);
+  }
+
+  async function addScene(hint?: string) {
+    if (!planArtifact) return;
+    const res = await fetch(`/api/tracks/${trackId}/service/scenes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scenePlanArtifactId: planArtifact.id, hint }),
+    });
+    if (!res.ok) return;
+    const { jobId } = (await res.json()) as { jobId: string };
+    setAddSceneJob(jobId);
   }
 
   async function updatePlan(next: ScenePlan) {
@@ -181,8 +224,12 @@ export function ServiceWorkspace({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {planJob && <JobProgress job={planJ} className="w-40" />}
+            {allFramesJob && <JobProgress job={allFramesJ} className="w-40" />}
             <Button onClick={() => generatePlan(6)} variant="outline">{plan ? "Regen plan" : "Generate plan"}</Button>
-            <Button onClick={generateNarration} variant="outline" disabled={!plan}>Generate narration</Button>
+            <Button onClick={() => renderAllFrames(false)} variant="outline" disabled={!plan}>
+              Render all frames
+            </Button>
+            <Button onClick={generateNarration} variant="outline" disabled={!plan}>Narration</Button>
             <Button onClick={assembleVideo} disabled={!plan}>Assemble video</Button>
           </div>
         </CardContent>
@@ -283,6 +330,34 @@ export function ServiceWorkspace({
                     </li>
                   ))}
                 </ul>
+
+                <div className="mt-3 space-y-2 rounded-md border border-dashed p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Add scene
+                    </div>
+                    {addSceneJob && <JobProgress job={addSceneJ} className="w-28" />}
+                  </div>
+                  <Input
+                    value={addSceneHint}
+                    onChange={(e) => setAddSceneHint(e.target.value)}
+                    placeholder='Optional: what should the new scene show? e.g. "customer leaves with a smile"'
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        addScene(addSceneHint || undefined);
+                        setAddSceneHint("");
+                      }}
+                    >
+                      + Add scene at end
+                    </Button>
+                    <p className="text-xs italic text-muted-foreground">
+                      Continues the same characters and visual world.
+                    </p>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </div>

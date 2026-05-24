@@ -114,6 +114,17 @@ export function ProductWorkspace({
     await refresh();
   }
 
+  async function deleteSketchVersion(versionId: string) {
+    if (!sketchArtifact) return;
+    if (!confirm("Delete this sketch variation? This removes the image permanently.")) return;
+    await fetch(`/api/tracks/${trackId}/product/sketches/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ artifactId: sketchArtifact.id, versionId }),
+    });
+    await refresh();
+  }
+
   async function refineSketch() {
     if (!sketchArtifact || !currentSketchVersion) return;
     let editedCanvasBase64: string | undefined;
@@ -138,16 +149,46 @@ export function ProductWorkspace({
   }
 
   async function generateMesh() {
-    if (!currentSketchVersion) return;
+    if (!currentSketchVersion || !sketchArtifact) return;
+    let editedCanvasBase64: string | undefined;
+    if (canvasRef.current?.hasStrokes()) {
+      editedCanvasBase64 = await canvasRef.current.exportComposite();
+    }
     const res = await fetch(`/api/tracks/${trackId}/product/mesh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sourceVersionId: currentSketchVersion.id }),
+      body: JSON.stringify({
+        sourceVersionId: currentSketchVersion.id,
+        sketchArtifactId: sketchArtifact.id,
+        editedCanvasBase64,
+      }),
     });
     if (!res.ok) return;
     const { jobId } = (await res.json()) as { jobId: string };
     setMeshJobId(jobId);
     setMeshPollJobId(null);
+    canvasRef.current?.clear();
+  }
+
+  async function chooseMeshVersion(versionId: string) {
+    if (!meshArtifact) return;
+    await fetch(`/api/tracks/${trackId}/product/mesh/choose`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ artifactId: meshArtifact.id, versionId }),
+    });
+    await refresh();
+  }
+
+  async function deleteMeshVersion(versionId: string, label: string) {
+    if (!meshArtifact) return;
+    if (!confirm(`Delete ${label}? This removes the GLB file permanently.`)) return;
+    await fetch(`/api/tracks/${trackId}/product/mesh/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ artifactId: meshArtifact.id, versionId }),
+    });
+    await refresh();
   }
 
   const meshUrl = currentMeshVersion?.storageKey
@@ -219,25 +260,43 @@ export function ProductWorkspace({
                     const meta = safeJson<{ variationIndex?: number }>(v.meta, {});
                     const isActive = sketchArtifact.currentVersionId === v.id;
                     return (
-                      <button
+                      <div
                         key={v.id}
-                        onClick={() => chooseVersion(v.id)}
-                        className={`relative block aspect-square overflow-hidden rounded-md border ${
+                        className={`group relative aspect-square overflow-hidden rounded-md border ${
                           isActive ? "ring-2 ring-primary" : "hover:ring-1 hover:ring-ring"
                         }`}
                         title={meta.variationIndex !== undefined ? `v${meta.variationIndex}` : "version"}
                       >
-                        {v.storageKey ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={`/api/storage/${v.storageKey}`}
-                            alt="variation"
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="grid h-full place-items-center text-xs text-muted-foreground">—</div>
-                        )}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => chooseVersion(v.id)}
+                          className="block h-full w-full"
+                          aria-label="Select this variation"
+                        >
+                          {v.storageKey ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={`/api/storage/${v.storageKey}`}
+                              alt="variation"
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="grid h-full place-items-center text-xs text-muted-foreground">—</div>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteSketchVersion(v.id);
+                          }}
+                          aria-label="Delete this variation"
+                          title="Delete variation"
+                          className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-black/60 text-[11px] leading-none text-white opacity-0 transition hover:bg-red-600 group-hover:opacity-100 focus:opacity-100"
+                        >
+                          ×
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -267,10 +326,70 @@ export function ProductWorkspace({
               >
                 {currentMeshVersion?.storageKey ? "Regenerate 3D from sketch" : "Generate 3D from sketch"}
               </Button>
-              {meshArtifact && (
-                <Badge variant="muted" className="text-[10px]">
-                  Linked to sketch version: {meshArtifact.versions[0]?.parentVersionId?.slice(-8) ?? "—"}
-                </Badge>
+              {meshArtifact && meshArtifact.versions.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    History ({meshArtifact.versions.length})
+                  </div>
+                  <ul className="space-y-1">
+                    {meshArtifact.versions.slice(0, 8).map((v, i) => {
+                      const isActive = meshArtifact.currentVersionId === v.id;
+                      const ready = !!v.storageKey;
+                      const label = `v${meshArtifact.versions.length - i}`;
+                      const time = new Date(v.createdAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      });
+                      return (
+                        <li
+                          key={v.id}
+                          className={`flex items-center justify-between gap-2 rounded border px-2 py-1 text-xs ${
+                            isActive ? "border-primary bg-primary/5" : ""
+                          }`}
+                        >
+                          <span className="flex items-center gap-2">
+                            <span className="font-mono">{label}</span>
+                            <span className="text-muted-foreground">{time}</span>
+                            {!ready && (
+                              <span className="text-[10px] text-muted-foreground">pending…</span>
+                            )}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            {ready && (
+                              <a
+                                href={`/api/storage/${v.storageKey}`}
+                                download={`model-${label}.glb`}
+                                className="rounded border px-2 py-0.5 text-[10px] hover:bg-muted"
+                              >
+                                Download
+                              </a>
+                            )}
+                            {!isActive && ready && (
+                              <button
+                                onClick={() => chooseMeshVersion(v.id)}
+                                className="rounded border px-2 py-0.5 text-[10px] hover:bg-muted"
+                              >
+                                Revert
+                              </button>
+                            )}
+                            {isActive && (
+                              <Badge variant="muted" className="text-[10px]">
+                                current
+                              </Badge>
+                            )}
+                            <button
+                              onClick={() => deleteMeshVersion(v.id, label)}
+                              className="rounded border border-red-300 px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-50"
+                              title="Delete this version permanently"
+                            >
+                              Delete
+                            </button>
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
               )}
             </CardContent>
           </Card>

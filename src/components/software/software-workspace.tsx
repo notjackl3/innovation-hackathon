@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { JobProgress, useJob } from "@/components/shared/job-progress";
 import { BlockRenderer } from "./block-renderer";
+import { LaptopFrame } from "./laptop-frame";
 import {
   DemoBundleSchema,
   ProductSpecSchema,
@@ -42,6 +44,7 @@ export function SoftwareWorkspace({
   const specJob = useJob(specJobId);
   const screensJob = useJob(screensJobId);
   const [activeScreen, setActiveScreen] = useState<string | null>(null);
+  const [editInstruction, setEditInstruction] = useState("");
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
 
@@ -98,7 +101,7 @@ export function SoftwareWorkspace({
     setShareUrl(data.url);
   }
 
-  async function generateScreens(onlyScreen?: string) {
+  async function generateScreens(onlyScreen?: string, editInstructionArg?: string) {
     if (!specArtifact) return;
     const res = await fetch(`/api/tracks/${trackId}/software/screens`, {
       method: "POST",
@@ -107,11 +110,19 @@ export function SoftwareWorkspace({
         productSpecArtifactId: specArtifact.id,
         bundleArtifactId: bundleArtifact?.id,
         onlyScreen,
+        editInstruction: editInstructionArg,
       }),
     });
     if (!res.ok) return;
     const { jobId } = (await res.json()) as { jobId: string };
     setScreensJobId(jobId);
+  }
+
+  async function editActiveScreen() {
+    const instruction = editInstruction.trim();
+    if (!activeScreen || !instruction) return;
+    await generateScreens(activeScreen, instruction);
+    setEditInstruction("");
   }
 
   const activeSpec = activeScreen ? screenIndex[activeScreen] : null;
@@ -212,21 +223,47 @@ export function SoftwareWorkspace({
             </CardContent>
           </Card>
 
-          <Card>
-            <CardContent className="p-5">
-              <div className="mb-3 flex items-center justify-between border-b pb-2">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Live demo · {activeSpec.title}
-                </div>
-                <Badge variant="muted">{activeSpec.blocks.length} blocks</Badge>
-              </div>
-              <BlockRenderer
-                spec={activeSpec}
-                screenIndex={screenIndex}
-                onNavigate={(name) => setActiveScreen(name)}
+          <div>
+            <div className="mb-2 flex items-center justify-between text-xs">
+              <span className="uppercase tracking-wide text-muted-foreground">
+                Live demo · {activeSpec.title}
+              </span>
+              <Badge variant="muted">{activeSpec.blocks.length} blocks</Badge>
+            </div>
+            <div className="mb-2 flex items-center gap-2 rounded-md border bg-muted/30 p-2">
+              <Input
+                value={editInstruction}
+                onChange={(e) => setEditInstruction(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void editActiveScreen();
+                  }
+                }}
+                placeholder={`Edit ${activeSpec.title} — e.g. "make the hero blue and add a stats block"`}
+                className="h-9 flex-1 bg-background"
               />
-            </CardContent>
-          </Card>
+              <Button
+                size="sm"
+                onClick={editActiveScreen}
+                disabled={
+                  !editInstruction.trim() ||
+                  (!!screensJobId && screensJob?.status === "RUNNING")
+                }
+              >
+                AI edit
+              </Button>
+            </div>
+            <LaptopFrame title={`${bundle.appName} — ${activeSpec.title}`}>
+              <div className="p-6">
+                <BlockRenderer
+                  spec={activeSpec}
+                  screenIndex={screenIndex}
+                  onNavigate={(name) => setActiveScreen(name)}
+                />
+              </div>
+            </LaptopFrame>
+          </div>
         </div>
       )}
     </div>

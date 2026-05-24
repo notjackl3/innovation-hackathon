@@ -18,6 +18,11 @@ interface Input {
   onlyScreen?: string;
   /** Optional: target an existing DEMO_BUNDLE artifact to update. */
   bundleArtifactId?: string;
+  /**
+   * Optional: when set together with onlyScreen, the LLM revises the existing
+   * screen using this instruction instead of generating from scratch.
+   */
+  editInstruction?: string;
 }
 
 interface Output {
@@ -162,19 +167,36 @@ registerHandler<Input, Output>("GEN_SCREEN_SPEC", async (input, ctx) => {
     };
   }
 
+  const editing =
+    !!input.editInstruction?.trim() && !!input.onlyScreen && targetScreens.length === 1;
+
   for (let i = 0; i < targetScreens.length; i++) {
     const name = targetScreens[i];
     await ctx.setProgress(15 + Math.round((i / targetScreens.length) * 75));
-    const response = await chatJson<ScreenSpec>({
-      system:
-        "You design a single screen for a software demo. Only output JSON matching the ScreenSpec schema. Blocks may be Hero, Stats, Table, Form, Chart, Card, List, Detail. ctaTo/submitTo/to fields must reference one of the provided screen names.",
-      user: `APP: ${spec.name} - ${spec.tagline}\nSCREEN NAME: ${name}\nFEATURES: ${spec.features.join(", ")}\nALL SCREENS: ${spec.screens.join(", ")}\n\nReturn JSON {name: "${name}", title, navLabel, blocks: [...]}.`,
-      jsonSchema: ScreenSpecSchema,
-      mockResponse: mockScreen(name, spec.screens),
-    });
+
+    const existing = editing ? bundle.screens.find((s) => s.name === name) ?? null : null;
+
+    const response = await chatJson<ScreenSpec>(
+      existing
+        ? {
+            system:
+              "You revise a single screen of a software demo. The user gives you the CURRENT screen spec as JSON and an edit instruction. Output the FULL updated ScreenSpec JSON, preserving anything the instruction does not change. Keep the same name. Blocks may be Hero, Stats, Table, Form, Chart, Card, List, Detail. ctaTo/submitTo/to fields must reference one of the provided screen names.",
+            user: `APP: ${spec.name} - ${spec.tagline}\nALL SCREENS: ${spec.screens.join(", ")}\nSCREEN NAME: ${name}\n\nCURRENT SCREEN JSON:\n${JSON.stringify(existing, null, 2)}\n\nEDIT INSTRUCTION: ${input.editInstruction}\n\nReturn the full updated screen as JSON {name: "${name}", title, navLabel, blocks: [...]}.`,
+            jsonSchema: ScreenSpecSchema,
+            mockResponse: existing,
+          }
+        : {
+            system:
+              "You design a single screen for a software demo. Only output JSON matching the ScreenSpec schema. Blocks may be Hero, Stats, Table, Form, Chart, Card, List, Detail. ctaTo/submitTo/to fields must reference one of the provided screen names.",
+            user: `APP: ${spec.name} - ${spec.tagline}\nSCREEN NAME: ${name}\nFEATURES: ${spec.features.join(", ")}\nALL SCREENS: ${spec.screens.join(", ")}\n\nReturn JSON {name: "${name}", title, navLabel, blocks: [...]}.`,
+            jsonSchema: ScreenSpecSchema,
+            mockResponse: mockScreen(name, spec.screens),
+          }
+    );
     // Defense in depth: validate blocks and drop bad ones.
     const cleaned: ScreenSpec = {
       ...response,
+      name,
       blocks: safeParseBlocks(response.blocks),
     };
     bundle.screens = [...bundle.screens.filter((s) => s.name !== name), cleaned];
@@ -195,7 +217,10 @@ registerHandler<Input, Output>("GEN_SCREEN_SPEC", async (input, ctx) => {
       artifactId: bundleArtifactId,
       parentVersionId,
       contentJson: JSON.stringify(bundle),
-      meta: JSON.stringify({ screensUpdated: targetScreens }),
+      meta: JSON.stringify({
+        screensUpdated: targetScreens,
+        ...(editing ? { editInstruction: input.editInstruction } : {}),
+      }),
       createdBy: "ai",
     },
   });

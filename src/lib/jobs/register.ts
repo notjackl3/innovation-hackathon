@@ -11,6 +11,8 @@ import "@/lib/pipelines/refine-sketch";
 import "@/lib/pipelines/gen-mesh";
 import "@/lib/pipelines/gen-scene-plan";
 import "@/lib/pipelines/gen-scene-frame";
+import "@/lib/pipelines/gen-all-frames";
+import "@/lib/pipelines/add-scene";
 import "@/lib/pipelines/gen-narration";
 import "@/lib/pipelines/assemble-video";
 import "@/lib/pipelines/gen-product-spec";

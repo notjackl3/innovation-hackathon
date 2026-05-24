@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { generateImages } from "@/lib/ai/image";
+import { generateImages, editImage } from "@/lib/ai/image";
 import { getStorage } from "@/lib/storage";
 import { registerHandler } from "@/lib/jobs/runner";
 import { ScenePlanSchema, type ScenePlan } from "@/lib/schemas/scene";
@@ -40,15 +40,58 @@ registerHandler<Input, Output>("GEN_SCENE_FRAME", async (input, ctx) => {
   }
 
   await ctx.setProgress(20);
-  const [img] = await generateImages({
-    prompt: scene.imagePrompt,
-    n: 1,
-    size: "1792x1024",
-    seed: `${ideaRecord.id}-${scene.index}`,
-  });
+
+  // Use the closest already-rendered neighbour as a visual reference for
+  // character continuity. Prefer the previous scene; fall back to the next.
+  const storage = getStorage();
+  const ordered = [...plan.scenes].sort((a, b) => a.index - b.index);
+  const myPos = ordered.findIndex((s) => s.index === scene.index);
+  const refKeys: string[] = [];
+  // anchor: first rendered scene's frame, if any
+  const anchor = ordered.find((s) => s.frameStorageKey);
+  if (anchor && anchor.index !== scene.index) refKeys.push(anchor.frameStorageKey!);
+  // immediate previous, if different from anchor
+  for (let i = myPos - 1; i >= 0; i--) {
+    const k = ordered[i].frameStorageKey;
+    if (k && !refKeys.includes(k)) { refKeys.push(k); break; }
+  }
+  const refBuffers: Buffer[] = [];
+  for (const k of refKeys) {
+    try {
+      const b = await storage.get(k);
+      if (b[0] !== 0x3c) refBuffers.push(b); // skip SVG mock frames
+    } catch { /* ignore */ }
+  }
+
+  let img;
+  if (refBuffers.length === 0) {
+    const fullPrompt = plan.styleAnchor
+      ? `${plan.styleAnchor}\n\nThis frame: ${scene.imagePrompt}`
+      : scene.imagePrompt;
+    [img] = await generateImages({
+      prompt: fullPrompt,
+      n: 1,
+      size: "landscape",
+      seed: `${ideaRecord.id}-${scene.index}`,
+    });
+  } else {
+    const fullPrompt = [
+      plan.styleAnchor || "",
+      "",
+      "The reference image(s) show the same protagonist and world.",
+      "Produce a NEW scene with the SAME protagonist (same face, same hair, same outfit, same accessories) and the SAME location, lighting, lens, and colour grade.",
+      "Only the framing, pose, and action change.",
+      "",
+      `Beat: ${scene.imagePrompt}`,
+    ].join("\n");
+    img = await editImage({
+      prompt: fullPrompt,
+      baseImage: refBuffers,
+      size: "landscape",
+    });
+  }
   await ctx.setProgress(70);
 
-  const storage = getStorage();
   const ext = img.contentType.includes("svg") ? "svg" : "png";
   const key = `companies/${ideaRecord.companyId}/ideas/${ideaRecord.id}/tracks/${track.id}/frames/${input.scenePlanArtifactId}-s${scene.index}-${Date.now()}.${ext}`;
   await storage.put(key, img.bytes, img.contentType);

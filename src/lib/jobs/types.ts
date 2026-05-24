@@ -7,6 +7,8 @@ export type JobKind =
   | "GEN_MESH_POLL"
   | "GEN_SCENE_PLAN"
   | "GEN_SCENE_FRAME"
+  | "GEN_ALL_FRAMES"
+  | "ADD_SCENE"
   | "GEN_NARRATION"
   | "ASSEMBLE_VIDEO"
   | "GEN_PRODUCT_SPEC"

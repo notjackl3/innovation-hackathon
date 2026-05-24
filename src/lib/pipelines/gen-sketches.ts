@@ -22,7 +22,7 @@ registerHandler<Input, Output>("GEN_SKETCHES", async (input, ctx) => {
   const { track, idea, company, ideaRecord } = await getTrackContext(input.trackId);
   if (track.kind !== "PRODUCT") throw new Error("GEN_SKETCHES requires PRODUCT track");
 
-  const prompt = [
+  const corePrompt = [
     brandPromptPrefix(company),
     `Concept design sketch for a new product idea: ${ideaRecord.title}.`,
     idea?.problem ? `It addresses: ${idea.problem}.` : "",
@@ -33,10 +33,37 @@ registerHandler<Input, Output>("GEN_SKETCHES", async (input, ctx) => {
     .filter(Boolean)
     .join(" ");
 
-  await ctx.log(`Generating ${n} sketch variation(s).`);
+  // Each variation gets a distinct DESIGN DIRECTION so the results are
+  // genuinely different while staying on-brief. Modifiers are abstract on
+  // purpose — they describe an aesthetic philosophy, not specific materials
+  // or angles, so they translate across product categories (electronics,
+  // furniture, kitchenware, apparel, tools, etc.). The model picks materials,
+  // finishes, and camera angles that suit the product type.
+  const variationModifiers = [
+    "Design direction A — MINIMALIST & REFINED: clean uncluttered geometry, restrained monochrome or near-monochrome palette, elegant proportions, smooth surfaces, soft even lighting. Use materials and a camera angle that flatter this product category.",
+    "Design direction B — BOLD & EXPRESSIVE: strong confident silhouette, exaggerated proportions, vivid contrasting color accents, prominent signature feature. Use materials and a camera angle that emphasize the form's drama.",
+    "Design direction C — PREMIUM & CRAFTED: high-quality materials chosen as appropriate for this product category, refined construction details, warm neutral palette with metallic or natural accents, soft studio lighting that highlights craftsmanship.",
+    "Design direction D — FUTURISTIC & INNOVATIVE: unexpected modern silhouette, cool palette with a single luminous accent color, sleek high-tech materials suited to the product, distinctive standout feature, dynamic camera angle.",
+    "Design direction E — PLAYFUL & APPROACHABLE: rounded organic forms, friendly pastel palette, soft tactile finish appropriate to the product, inviting and warm presentation.",
+    "Design direction F — RUGGED & UTILITARIAN: robust purposeful construction, durable materials suited to the product, industrial palette (muted neutrals with a single safety-color accent), exposed functional details, no-nonsense presentation.",
+  ];
+
+  await ctx.log(`Generating ${n} distinct sketch variation(s).`);
   await ctx.setProgress(15);
 
-  const images = await generateImages({ prompt, n, seed: ideaRecord.title });
+  // Make N parallel single-image calls, each with its own modifier. This is the
+  // only reliable way to get visually distinct variations — passing n>1 to the
+  // image API returns near-duplicate samples of the same prompt.
+  const prompts = Array.from({ length: n }, (_, i) => {
+    const modifier = variationModifiers[i % variationModifiers.length];
+    return `${corePrompt} ${modifier}`;
+  });
+  const results = await Promise.all(
+    prompts.map((p, i) =>
+      generateImages({ prompt: p, n: 1, seed: `${ideaRecord.title}-${i}` })
+    )
+  );
+  const images = results.flat();
   await ctx.setProgress(70);
 
   const storage = getStorage();
@@ -59,7 +86,11 @@ registerHandler<Input, Output>("GEN_SKETCHES", async (input, ctx) => {
       data: {
         artifactId: artifact.id,
         storageKey: stored.key,
-        meta: JSON.stringify({ prompt, variationIndex: i, contentType: img.contentType }),
+        meta: JSON.stringify({
+          prompt: prompts[i],
+          variationIndex: i,
+          contentType: img.contentType,
+        }),
         createdBy: "ai",
       },
     });

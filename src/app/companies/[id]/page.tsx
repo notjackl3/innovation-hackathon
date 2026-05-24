@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { prisma } from "@/lib/db";
 import { CompanyBriefSchema } from "@/lib/schemas/brief";
 import { DocumentManager } from "@/components/shared/document-manager";
-import { BriefEditor } from "@/components/shared/brief-editor";
+import { ResearchSummary } from "@/components/shared/research-summary";
 
 export const dynamic = "force-dynamic";
 
@@ -93,14 +93,7 @@ export default async function CompanyPage({ params }: { params: Promise<{ id: st
         </section>
 
         <aside>
-          <Card>
-            <CardHeader>
-              <CardTitle>Company brief</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <BriefEditor companyId={company.id} initialBrief={brief} />
-            </CardContent>
-          </Card>
+          <ResearchSummary companyId={company.id} brief={brief} />
         </aside>
       </div>
     </main>

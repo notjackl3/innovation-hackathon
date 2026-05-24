@@ -32,17 +32,25 @@ export async function createMeshyTask(opts: MeshyCreateOpts): Promise<MeshyCreat
   if (isMockMeshy()) {
     return { taskId: `mock-${Date.now()}` };
   }
+  // meshy-4 doesn't support enable_pbr; meshy-5 does. We use meshy-5 by
+  // default since it gives better quality, but allow override via env.
+  const aiModel = process.env.MESHY_MODEL ?? "meshy-5";
+  const body: Record<string, unknown> = {
+    image_url: opts.imageUrl,
+    ai_model: aiModel,
+    should_texture: true,
+    should_remesh: true,
+  };
+  if (aiModel !== "meshy-4") body.enable_pbr = true;
+  if (opts.prompt) body.texture_prompt = opts.prompt;
+
   const res = await fetch(`${MESHY_BASE}/image-to-3d`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.MESHY_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      image_url: opts.imageUrl,
-      enable_pbr: true,
-      ai_model: "meshy-4",
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Meshy create failed: ${res.status} ${await res.text()}`);
   const json = (await res.json()) as { result: string };

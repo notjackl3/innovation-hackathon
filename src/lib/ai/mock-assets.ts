@@ -51,3 +51,32 @@ export function mockSketchPng(seed: string): Buffer {
 export function mockFramePng(seed: string): Buffer {
   return mockSketchPng("frame:" + seed);
 }
+
+/**
+ * Returns a minimal but valid GLB (glTF 2.0 binary) describing an empty scene.
+ * GLTFLoader will parse it without error so the 3D viewer can mount cleanly
+ * even when there's no real Meshy result. The on-screen content is rendered
+ * by the viewer's own <Placeholder/> mesh when the scene is empty.
+ */
+export function mockGlb(): Buffer {
+  const json = JSON.stringify({ asset: { version: "2.0" }, scenes: [{}], scene: 0 });
+  // JSON chunk must be padded to a 4-byte boundary with spaces (0x20).
+  const padLen = (4 - (json.length % 4)) % 4;
+  const jsonPadded = json + " ".repeat(padLen);
+  const jsonBytes = Buffer.from(jsonPadded, "utf8");
+
+  const headerLen = 12; // GLB header
+  const chunkHeaderLen = 8; // chunk length + chunk type
+  const total = headerLen + chunkHeaderLen + jsonBytes.length;
+
+  const buf = Buffer.alloc(total);
+  // GLB header
+  buf.writeUInt32LE(0x46546c67, 0); // magic "glTF"
+  buf.writeUInt32LE(2, 4); // version
+  buf.writeUInt32LE(total, 8); // length
+  // JSON chunk
+  buf.writeUInt32LE(jsonBytes.length, 12);
+  buf.writeUInt32LE(0x4e4f534a, 16); // chunk type "JSON"
+  jsonBytes.copy(buf, 20);
+  return buf;
+}

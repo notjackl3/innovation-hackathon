@@ -7,6 +7,7 @@ const Body = z.object({
   productSpecArtifactId: z.string(),
   onlyScreen: z.string().optional(),
   bundleArtifactId: z.string().optional(),
+  editInstruction: z.string().trim().min(1).optional(),
 });
 
 export async function POST(
@@ -23,6 +24,7 @@ export async function POST(
       productSpecArtifactId: body.data.productSpecArtifactId,
       onlyScreen: body.data.onlyScreen,
       bundleArtifactId: body.data.bundleArtifactId,
+      editInstruction: body.data.editInstruction,
     },
     trackId,
   });

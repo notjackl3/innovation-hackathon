@@ -8,10 +8,118 @@ interface Input {
   ideaId: string;
 }
 
-function guessType(text: string): "PRODUCT" | "SERVICE" | "SOFTWARE" {
+const SOFTWARE_TERMS = [
+  "app",
+  "application",
+  "software",
+  "platform",
+  "dashboard",
+  "saas",
+  "api",
+  "sdk",
+  "plugin",
+  "extension",
+  "chatbot",
+  "bot",
+  "ai",
+  "ml",
+  "llm",
+  "algorithm",
+  "agent",
+  "automation",
+  "analytics",
+  "crm",
+  "erp",
+  "ios",
+  "android",
+  "web app",
+  "mobile app",
+];
+
+const SERVICE_TERMS = [
+  "service",
+  "experience",
+  "consult",
+  "consultation",
+  "consulting",
+  "coaching",
+  "training",
+  "workshop",
+  "course",
+  "subscription",
+  "membership",
+  "club",
+  "program",
+  "concierge",
+  "on-demand",
+  "delivery",
+  "pickup",
+  "booking",
+  "reservation",
+  "appointment",
+  "rental",
+  "lease",
+  "cafe",
+  "restaurant",
+  "lounge",
+  "salon",
+  "store",
+];
+
+const PRODUCT_TERMS = [
+  "bottle",
+  "mug",
+  "jacket",
+  "shoe",
+  "sneaker",
+  "bag",
+  "backpack",
+  "chair",
+  "lamp",
+  "wearable",
+  "device",
+  "gadget",
+  "appliance",
+  "sensor",
+  "kit",
+  "hardware",
+  "tumbler",
+  "fridge",
+  "speaker",
+  "headphone",
+  "watch",
+  "tool",
+  "packaging",
+];
+
+function score(text: string, terms: string[]): number {
+  let s = 0;
+  for (const term of terms) {
+    const re = new RegExp(`\\b${term.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\b`, "g");
+    const matches = text.match(re);
+    if (matches) s += matches.length;
+  }
+  return s;
+}
+
+/**
+ * Heuristic classifier used in MOCK mode and as a guide for the real LLM.
+ * Exported for unit testing. Strategy: count keyword hits in each bucket;
+ * highest wins. Ties broken in priority order SOFTWARE > SERVICE > PRODUCT
+ * because the most distinctive terms (saas, api, llm) live in SOFTWARE and
+ * the absence of any match defaults to PRODUCT (most ideas without explicit
+ * service or software cues are tangible products).
+ */
+export function guessType(text: string): "PRODUCT" | "SERVICE" | "SOFTWARE" {
   const t = text.toLowerCase();
-  if (/\bapp|software|platform|dashboard|saas|api|ai\b/.test(t)) return "SOFTWARE";
-  if (/\bservice|experience|consult|subscription|cafe|store|membership\b/.test(t)) return "SERVICE";
+  const software = score(t, SOFTWARE_TERMS);
+  const service = score(t, SERVICE_TERMS);
+  const product = score(t, PRODUCT_TERMS);
+  // If nothing matched at all, default to PRODUCT.
+  if (software === 0 && service === 0 && product === 0) return "PRODUCT";
+  const max = Math.max(software, service, product);
+  if (software === max) return "SOFTWARE";
+  if (service === max) return "SERVICE";
   return "PRODUCT";
 }
 

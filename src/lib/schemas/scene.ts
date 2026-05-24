@@ -16,6 +16,12 @@ export type Scene = z.infer<typeof SceneSchema>;
 
 export const ScenePlanSchema = z.object({
   styleSummary: z.string(),
+  /**
+   * Shared visual anchor prepended to every per-scene imagePrompt. Encodes
+   * the persistent characters, location, lighting, palette, lens, and grade
+   * so frames flow into each other instead of feeling like unrelated stills.
+   */
+  styleAnchor: z.string().default(""),
   scenes: z.array(SceneSchema).min(1),
 });
 export type ScenePlan = z.infer<typeof ScenePlanSchema>;

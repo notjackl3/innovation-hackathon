@@ -33,7 +33,7 @@ export default function NewIdeaPage({ params }: { params: Promise<{ id: string }
       return;
     }
     const data = (await res.json()) as { id: string };
-    router.push(`/ideas/${data.id}`);
+    router.push(`/ideas/${data.id}/triage`);
   }
 
   return (
