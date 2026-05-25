@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { SiteHeader } from "@/components/landing/site-header";
 import { Hero } from "@/components/landing/hero";
-import { SocialProof } from "@/components/landing/social-proof";
 import { MediaShowcase } from "@/components/landing/media-showcase";
 import { Benefits } from "@/components/landing/benefits";
 import { Testimonials } from "@/components/landing/testimonials";
@@ -43,7 +42,6 @@ export default function Home() {
       <SiteHeader />
       <main>
         <Hero />
-        <SocialProof />
         <MediaShowcase />
         <Benefits />
         <Testimonials />

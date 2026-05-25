@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import type { ResearchResult, CompanyCandidate } from "@/lib/schemas/research";
-import Link from "next/link";
+import { AppHeader } from "@/components/shared/app-header";
+import { PageHeader } from "@/components/shared/page-header";
 
 type Stage = "lookup" | "candidates" | "manual";
 
@@ -91,11 +92,18 @@ export default function NewCompanyPage() {
   }
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-12">
-      <div className="mb-6">
-        <Link href="/" className="text-xs text-muted-foreground hover:text-foreground">← Home</Link>
-      </div>
-      <Stepper stage={stage} />
+    <>
+      <AppHeader />
+      <main className="relative mx-auto max-w-3xl px-6 py-12">
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-64 bg-grain opacity-50" />
+        <PageHeader
+          backHref="/dashboard"
+          backLabel="Dashboard"
+          eyebrow="New company"
+          title="Start a company"
+          subtitle="Look up a company and Spark pre-fills its brief — or enter details manually."
+        />
+        <Stepper stage={stage} />
 
       {stage === "lookup" && (
         <Card className="mt-8">
@@ -205,7 +213,8 @@ export default function NewCompanyPage() {
           </CardContent>
         </Card>
       )}
-    </main>
+      </main>
+    </>
   );
 }
 
