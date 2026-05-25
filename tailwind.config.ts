@@ -41,6 +41,9 @@ const config: Config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        product: "hsl(var(--product))",
+        service: "hsl(var(--service))",
+        software: "hsl(var(--software))",
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -49,6 +52,7 @@ const config: Config = {
       },
       fontFamily: {
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
+        display: ["var(--font-heading)", "system-ui", "sans-serif"],
         mono: ["var(--font-mono)", "ui-monospace", "monospace"],
       },
       keyframes: {
