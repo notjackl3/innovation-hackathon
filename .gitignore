@@ -15,3 +15,4 @@ prisma/dev.db-journal
 coverage
 .vitest-cache
 tsconfig.tsbuildinfo
+.gstack/
