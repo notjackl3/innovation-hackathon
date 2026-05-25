@@ -86,10 +86,14 @@ registerHandler<Input, Output>("GEN_ALL_FRAMES", async (input, ctx) => {
       let contentType = "image/png";
 
       if (isFirst) {
-        // Scene 0 (or first unrendered scene with no prior reference): fresh generate
+        // Scene 0 (or first unrendered scene with no prior reference): fresh generate.
+        // Force a stylized animated look so downstream video models (Seedance,
+        // etc.) accept the image — their real-person filters reject photoreal.
+        const STYLE_DIRECTIVE =
+          "Rendered as a stylized 2D animated film still — soft cel-shading, painterly textures, warm cinematic colour palette, expressive but slightly stylized features. NOT photoreal. NOT a photograph.";
         const fullPrompt = plan.styleAnchor
-          ? `${plan.styleAnchor}\n\nThis is the OPENING scene of a short narrative video. ${scene.imagePrompt}\n\nThe protagonist's exact appearance MUST match the styleAnchor.`
-          : scene.imagePrompt;
+          ? `${plan.styleAnchor}\n\n${STYLE_DIRECTIVE}\n\nOpening scene of a short animated narrative: ${scene.imagePrompt}\n\nThe protagonist's appearance MUST match the styleAnchor.`
+          : `${STYLE_DIRECTIVE}\n\n${scene.imagePrompt}`;
         const [img] = await generateImages({
           prompt: fullPrompt,
           n: 1,
@@ -105,6 +109,8 @@ registerHandler<Input, Output>("GEN_ALL_FRAMES", async (input, ctx) => {
           : [previousBytes!];
         const fullPrompt = [
           plan.styleAnchor || "",
+          "",
+          "STYLE: stylized 2D animated film still — soft cel-shading, painterly textures. NOT photoreal.",
           "",
           "This is the NEXT BEAT of a continuous narrative. The reference image(s) show the same protagonist and world.",
           "Produce a NEW scene with the SAME protagonist (same face, same hair, same outfit, same accessories) and the SAME location, lighting, lens, and colour grade.",
@@ -125,11 +131,14 @@ registerHandler<Input, Output>("GEN_ALL_FRAMES", async (input, ctx) => {
       const key = `companies/${ideaRecord.companyId}/ideas/${ideaRecord.id}/tracks/${track.id}/frames/${input.scenePlanArtifactId}-s${scene.index}-${Date.now()}.${ext}`;
       await storage.put(key, bytes, contentType);
 
-      // Update plan + persist a new version so lineage is preserved per scene.
+      // Cascade-invalidate the per-scene Seedance motion clip: it was
+      // animated from the OLD frame, so it's stale once the frame changes.
       plan = {
         ...plan,
         scenes: plan.scenes.map((s) =>
-          s.index === scene.index ? { ...s, frameStorageKey: key } : s
+          s.index === scene.index
+            ? { ...s, frameStorageKey: key, videoStorageKey: null }
+            : s
         ),
       };
       const newVersion = await prisma.artifactVersion.create({
@@ -140,6 +149,7 @@ registerHandler<Input, Output>("GEN_ALL_FRAMES", async (input, ctx) => {
           meta: JSON.stringify({
             updatedSceneIndex: scene.index,
             frameStorageKey: key,
+            clearedVideoStorageKey: true,
             generationMode: isFirst ? "fresh" : "edit-with-reference",
           }),
           createdBy: "ai",

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { JobProgress, useJob } from "./job-progress";
+import { useJob } from "./job-progress";
 
 interface Doc {
   id: string;
@@ -102,7 +102,6 @@ export function DocumentManager({ companyId, initialDocs }: { companyId: string;
         </div>
       </div>
 
-      {activeJob && <JobProgress job={job} className="rounded-md border bg-muted/40 p-3" />}
 
       {docs.length === 0 ? (
         <p className="text-sm text-muted-foreground">No documents yet.</p>

@@ -14,24 +14,128 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { safeParseBlocks, type Block, type ScreenSpec } from "@/lib/schemas/screen";
+import { isInteractiveTarget } from "./interaction-utils";
 
 interface RendererProps {
   spec: ScreenSpec;
   onNavigate: (screenName: string) => void;
   screenIndex: Record<string, ScreenSpec>;
+  /**
+   * When true, each block is wrapped in a selection-aware container so the
+   * marquee in the workspace can find it via `data-block-index`. A click on
+   * the wrapper toggles selection via onToggleSelect.
+   */
+  selectable?: boolean;
+  selectedIndices?: number[];
+  onToggleSelect?: (index: number, ev: React.MouseEvent) => void;
+  /**
+   * When true, each wrapper renders a drag handle (⋮⋮) in the corner; pointer
+   * events on the handle are routed to the workspace's drag manager via
+   * onBlockDragStart. While a drag is in progress, the workspace sets
+   * draggingIndex (which block is being moved) and dropTargetIndex (the
+   * insertion slot — an indicator line appears before that index, or after
+   * the last block when dropTargetIndex === blocks.length).
+   */
+  draggable?: boolean;
+  draggingIndex?: number | null;
+  dropTargetIndex?: number | null;
+  onBlockDragStart?: (index: number, ev: React.PointerEvent<HTMLElement>) => void;
 }
 
-export function BlockRenderer({ spec, onNavigate, screenIndex }: RendererProps) {
+export function BlockRenderer({
+  spec,
+  onNavigate,
+  screenIndex,
+  selectable = false,
+  selectedIndices,
+  onToggleSelect,
+  draggable = false,
+  draggingIndex = null,
+  dropTargetIndex = null,
+  onBlockDragStart,
+}: RendererProps) {
   const blocks = useMemo(() => safeParseBlocks(spec.blocks), [spec.blocks]);
+  const selectedSet = useMemo(() => new Set(selectedIndices ?? []), [selectedIndices]);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4" data-block-list>
       {blocks.length === 0 && (
         <Badge variant="warn">No valid blocks on this screen.</Badge>
       )}
-      {blocks.map((block, i) => (
-        <BlockView key={`${spec.name}-${i}`} block={block} onNavigate={onNavigate} screenIndex={screenIndex} />
-      ))}
+      {blocks.map((block, i) => {
+        const view = (
+          <BlockView
+            block={block}
+            onNavigate={onNavigate}
+            screenIndex={screenIndex}
+          />
+        );
+        if (!selectable) return <div key={`${spec.name}-${i}`}>{view}</div>;
+        const isSelected = selectedSet.has(i);
+        const isDragging = draggingIndex === i;
+        const showInsertionBefore = dropTargetIndex === i && draggingIndex !== null && draggingIndex !== i;
+        return (
+          <div key={`${spec.name}-${i}`} className="group relative">
+            {showInsertionBefore && (
+              <div
+                data-drop-indicator
+                aria-hidden
+                className="absolute -top-2 left-0 right-0 h-0.5 rounded-full bg-primary"
+              />
+            )}
+            <div
+              data-block-index={i}
+              onClick={(ev) => {
+                if (isInteractiveTarget(ev.target)) return;
+                onToggleSelect?.(i, ev);
+              }}
+              className={`relative rounded-xl transition ${
+                isDragging ? "opacity-30" : ""
+              } ${
+                isSelected
+                  ? "outline outline-2 outline-primary outline-offset-2"
+                  : "hover:outline hover:outline-1 hover:outline-muted-foreground/40 hover:outline-offset-2"
+              } cursor-pointer`}
+              aria-selected={isSelected}
+            >
+              {isSelected && (
+                <span className="pointer-events-none absolute -top-2 left-2 z-10 rounded bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">
+                  #{i}
+                </span>
+              )}
+              {draggable && (
+                <button
+                  type="button"
+                  data-drag-handle
+                  data-drag-index={i}
+                  onPointerDown={(ev) => onBlockDragStart?.(i, ev)}
+                  onClick={(ev) => ev.stopPropagation()}
+                  aria-label={`Drag block ${i}`}
+                  className="absolute right-2 top-2 z-20 grid h-6 w-6 cursor-grab place-items-center rounded border border-border bg-background/90 text-muted-foreground opacity-0 shadow-sm transition group-hover:opacity-100 active:cursor-grabbing"
+                >
+                  <svg width="10" height="14" viewBox="0 0 10 14" aria-hidden>
+                    <circle cx="2" cy="2" r="1.2" fill="currentColor" />
+                    <circle cx="8" cy="2" r="1.2" fill="currentColor" />
+                    <circle cx="2" cy="7" r="1.2" fill="currentColor" />
+                    <circle cx="8" cy="7" r="1.2" fill="currentColor" />
+                    <circle cx="2" cy="12" r="1.2" fill="currentColor" />
+                    <circle cx="8" cy="12" r="1.2" fill="currentColor" />
+                  </svg>
+                </button>
+              )}
+              {view}
+            </div>
+          </div>
+        );
+      })}
+      {/* Insertion indicator AFTER the last block (drop at end). */}
+      {selectable && draggingIndex !== null && dropTargetIndex === blocks.length && (
+        <div
+          data-drop-indicator
+          aria-hidden
+          className="relative -mt-2 h-0.5 rounded-full bg-primary"
+        />
+      )}
     </div>
   );
 }

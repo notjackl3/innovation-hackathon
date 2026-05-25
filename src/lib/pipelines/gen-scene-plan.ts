@@ -27,15 +27,19 @@ registerHandler<Input, Output>("GEN_SCENE_PLAN", async (input, ctx) => {
     system: [
       "You design short narrative video storyboards. Think of it like a 30-second short film, not a slideshow.",
       "",
+      "VISUAL STYLE: every frame must be rendered as a STYLIZED 2D animated illustration — like a modern animated short or Pixar/Studio Ghibli concept art. Soft cel-shading, painterly textures, expressive but slightly stylized features, vibrant warm colours. NOT photoreal. NEVER request 'photograph', 'photoreal', 'documentary', 'hyperreal', or 'realistic person'. The chosen style avoids deepfake-style risks and is accepted by downstream video models.",
+      "",
       "STORY AND CHARACTER CONTINUITY ARE THE TOP PRIORITY:",
-      "- ONE primary protagonist appears in every scene. Give them a NAME (e.g. 'Maya'), an age, ethnicity, hair (colour + style), exact outfit (top + bottom + shoes + accessories), and any unique features (glasses, watch, tote bag). Be aggressively specific — this description is the only thing keeping them looking like the same person across frames.",
+      "- ONE primary protagonist appears in every scene. Give them a NAME (e.g. 'Maya'), an age, ethnicity, hair (colour + style), exact outfit (top + bottom + shoes + accessories), and any unique features (glasses, watch, tote bag). Be aggressively specific — this description is the only thing keeping them looking like the same character across frames.",
       "- A consistent supporting character if it makes sense — give them name + appearance + uniform.",
-      "- The SAME location with the SAME lighting, lens, and colour grade throughout.",
-      "- Scenes follow a clear beginning → middle → end arc. The protagonist physically progresses through the space (arrives → engages → leaves) AND emotionally progresses (curious → engaged → delighted).",
+      "- The SAME illustrated location with the SAME lighting and colour palette throughout.",
+      "- Scenes follow a clear beginning → middle → end arc. The protagonist physically progresses (arrives → engages → leaves) AND emotionally progresses (curious → engaged → delighted).",
       "",
-      "OUTPUT `styleAnchor` — one paragraph that locks the world. It MUST include: (1) protagonist name + complete physical description and outfit, (2) supporting character (if any), (3) location with concrete details, (4) lighting / time of day, (5) camera / lens, (6) colour grade + palette.",
+      "OUTPUT `styleAnchor` — one paragraph that locks the world. It MUST include: (1) explicit stylized-illustration / animated-film aesthetic ('rendered as a 2D animated film still, soft cel-shading, warm painterly look, stylized features, NOT photoreal'), (2) protagonist name + complete physical description and outfit (drawn in the same style), (3) supporting character if any, (4) location with concrete details, (5) lighting / time of day, (6) colour palette.",
       "",
-      "OUTPUT each scene's `imagePrompt` — just camera framing + protagonist's action + emotion for THIS beat. Begin every imagePrompt with the protagonist's name so the model anchors on them (e.g. 'Maya leans forward at the booth, smiling…'). Do NOT restate location/lighting/style — that lives in styleAnchor.",
+      "OUTPUT each scene's `imagePrompt` — just camera framing + protagonist's STARTING POSE + emotion for THIS beat. Begin every imagePrompt with the protagonist's name (e.g. 'Maya leans forward at the booth, smiling…'). Do NOT restate location/lighting/style — that lives in styleAnchor.",
+      "",
+      "OUTPUT each scene's `motionPrompt` — what the character DOES during the ~5-second clip. Use action verbs and describe motion explicitly ('Maya turns her head, smiles, then reaches out to touch the booth'). The starting frame matches imagePrompt; the motion is what makes it a video instead of a still. Include camera motion if any ('slow push-in', 'subtle hand-held drift').",
       "",
       "Caption ≤ 8 words. Narration = one sentence in the brand voice.",
     ].join(" "),
@@ -57,13 +61,15 @@ Return a ${n}-scene plan. Use scene indices 0..${n - 1}. Each scene needs: index
         index: i,
         title: ["Welcome", "Begin", "Engage", "Delight", "Share", "Return", "Belong", "Repeat"][i] ?? `Scene ${i + 1}`,
         imagePrompt: `Wide establishing shot of the protagonist entering the cafe (moment ${i + 1} of ${n}).`,
+        motionPrompt: `The protagonist walks forward, turns to look at the camera, and smiles. Subtle hand-held camera drift.`,
         caption: ["Discover", "Begin", "Engage", "Delight", "Share", "Return", "Belong", "Repeat"][i] ?? `Step ${i + 1}`,
         narration: `Scene ${i + 1}: a customer experiences ${ideaRecord.title}.`,
-        durationSec: 4,
+        durationSec: 5,
         transition: i === 0 ? "cut" : "fade",
         locked: false,
         frameStorageKey: null,
         audioStorageKey: null,
+        videoStorageKey: null,
       })),
     },
   });
@@ -75,7 +81,12 @@ Return a ${n}-scene plan. Use scene indices 0..${n - 1}. Each scene needs: index
   // GEN_ALL_FRAMES job sees them as missing and actually renders frames.
   const scrubbedPlan: ScenePlan = {
     ...plan,
-    scenes: plan.scenes.map((s) => ({ ...s, frameStorageKey: null, audioStorageKey: null })),
+    scenes: plan.scenes.map((s) => ({
+      ...s,
+      frameStorageKey: null,
+      audioStorageKey: null,
+      videoStorageKey: null,
+    })),
   };
 
   const artifact = await prisma.artifact.create({

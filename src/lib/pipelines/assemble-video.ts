@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { registerHandler } from "@/lib/jobs/runner";
 import { getStorage } from "@/lib/storage";
 import { ScenePlanSchema, type ScenePlan } from "@/lib/schemas/scene";
-import { renderSlideshow } from "@/lib/ai/ffmpeg-runner";
+import { renderSlideshow, renderMontage } from "@/lib/ai/ffmpeg-runner";
 import { getTrackContext } from "./_helpers";
 
 interface Input {
@@ -12,7 +12,7 @@ interface Input {
 
 interface Output {
   videoStorageKey: string;
-  rendererUsed: "ffmpeg" | "renderer" | "manifest";
+  rendererUsed: "ffmpeg" | "ffmpeg-montage" | "renderer" | "manifest";
   framesUsed: number;
   durationSec: number;
 }
@@ -40,7 +40,47 @@ registerHandler<Input, Output>("ASSEMBLE_VIDEO", async (input, ctx) => {
   await ctx.setProgress(10);
 
   const scenesWithFrames = plan.scenes.filter((s) => s.frameStorageKey);
-  await ctx.log(`Scene plan has ${plan.scenes.length} scenes; ${scenesWithFrames.length} have rendered frames.`);
+  const scenesWithVideos = plan.scenes.filter((s) => s.videoStorageKey);
+  await ctx.log(
+    `Scene plan has ${plan.scenes.length} scenes; ${scenesWithFrames.length} have stills, ${scenesWithVideos.length} have motion videos.`
+  );
+
+  // Preferred path: every scene has a per-scene Seedance MP4 → stitch real motion clips.
+  if (scenesWithVideos.length === plan.scenes.length && scenesWithVideos.length > 0) {
+    await ctx.log("Stitching motion clips (renderMontage)");
+    const ordered = [...plan.scenes].sort((a, b) => a.index - b.index);
+    const clips: Buffer[] = [];
+    const durations: number[] = [];
+    const captions: string[] = [];
+    for (const scene of ordered) {
+      try {
+        const bytes = await storage.get(scene.videoStorageKey!);
+        clips.push(bytes);
+        durations.push(scene.durationSec ?? 5);
+        captions.push(scene.caption ?? "");
+      } catch (e) {
+        await ctx.log(`Scene ${scene.index} video unreadable (${(e as Error).message}); falling back to still-image path.`);
+        // Fall through to slideshow path by clearing clips
+        clips.length = 0;
+        break;
+      }
+    }
+    if (clips.length > 0) {
+      await ctx.setProgress(35);
+      const mp4 = await renderMontage({ clips, durations, captions });
+      await ctx.setProgress(85);
+      const key = `${outKeyBase}.mp4`;
+      await storage.put(key, mp4, "video/mp4");
+      await persist(track.id, key, "ffmpeg-montage", input.scenePlanArtifactId, "video/mp4");
+      await ctx.setProgress(100);
+      return {
+        videoStorageKey: key,
+        rendererUsed: "ffmpeg-montage",
+        framesUsed: clips.length,
+        durationSec: durations.reduce((a, b) => a + b, 0) - 0.6 * Math.max(0, clips.length - 1),
+      };
+    }
+  }
 
   // Fallback path: no frames at all → manifest
   if (scenesWithFrames.length === 0) {

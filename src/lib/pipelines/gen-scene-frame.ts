@@ -96,11 +96,16 @@ registerHandler<Input, Output>("GEN_SCENE_FRAME", async (input, ctx) => {
   const key = `companies/${ideaRecord.companyId}/ideas/${ideaRecord.id}/tracks/${track.id}/frames/${input.scenePlanArtifactId}-s${scene.index}-${Date.now()}.${ext}`;
   await storage.put(key, img.bytes, img.contentType);
 
-  // Update the scene plan with the new frame key (new version)
+  // Cascade-invalidate downstream artifacts: a new frame means the existing
+  // Seedance motion clip for THIS scene was animated from the old frame, so
+  // it's stale. Null it out so GEN_ALL_VIDEOS / re-assemble will regenerate
+  // this scene's clip from the new still.
   const updatedPlan: ScenePlan = {
     ...plan,
     scenes: plan.scenes.map((s) =>
-      s.index === input.sceneIndex ? { ...s, frameStorageKey: key } : s
+      s.index === input.sceneIndex
+        ? { ...s, frameStorageKey: key, videoStorageKey: null }
+        : s
     ),
   };
   const newVersion = await prisma.artifactVersion.create({
@@ -108,7 +113,11 @@ registerHandler<Input, Output>("GEN_SCENE_FRAME", async (input, ctx) => {
       artifactId: input.scenePlanArtifactId,
       parentVersionId: planArtifact.versions[0].id,
       contentJson: JSON.stringify(updatedPlan),
-      meta: JSON.stringify({ updatedSceneIndex: input.sceneIndex, frameStorageKey: key }),
+      meta: JSON.stringify({
+        updatedSceneIndex: input.sceneIndex,
+        frameStorageKey: key,
+        clearedVideoStorageKey: true,
+      }),
       createdBy: "ai",
     },
   });

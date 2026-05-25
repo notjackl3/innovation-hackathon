@@ -58,6 +58,111 @@ function safeDrawtext(s: string): string {
  *  - Final output `-t` is clamped to the exact expected length so no
  *    trailing freeze-frame can pad the file.
  */
+export interface MontageInput {
+  /** Per-scene MP4 buffers, in display order. */
+  clips: Buffer[];
+  /** Declared duration of each clip in seconds. Used to compute xfade offsets. */
+  durations: number[];
+  /** Per-scene captions to burn into the bottom-third. */
+  captions: string[];
+  width?: number;
+  height?: number;
+  transitionSec?: number;
+  transition?: RenderInput["transition"];
+}
+
+/**
+ * Stitches per-scene MP4 video clips into a single montage with xfade
+ * transitions between clips. Captions are burned onto each clip's tail so
+ * the protagonist's motion stays unobscured at the start of the scene.
+ *
+ * Unlike renderSlideshow (which loops still images), this preserves the
+ * native motion of each input — characters actually move during the video.
+ */
+export async function renderMontage(input: MontageInput): Promise<Buffer> {
+  if (!ffmpegPath) throw new Error("ffmpeg-static binary not found");
+  if (input.clips.length === 0) throw new Error("No clips to render");
+
+  const W = input.width ?? 1280;
+  const H = input.height ?? 720;
+  const transitionSec = input.transitionSec ?? 0.6;
+  const transition = input.transition ?? "smoothleft";
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "spark-montage-"));
+
+  try {
+    // Write each input clip to disk so ffmpeg can read it. Use the caller's
+    // declared durations to compute xfade offsets — we trust those because
+    // ffmpeg-static doesn't ship ffprobe.
+    const clipPaths: string[] = [];
+    for (let i = 0; i < input.clips.length; i++) {
+      const p = path.join(tmpRoot, `clip-${i}.mp4`);
+      await fs.writeFile(p, input.clips[i]);
+      clipPaths.push(p);
+    }
+    const durations = input.durations.map((d) => Math.max(0.5, d));
+
+    const totalDuration =
+      durations.reduce((s, d) => s + d, 0) - transitionSec * Math.max(0, input.clips.length - 1);
+
+    const args = ffmpeg();
+    for (const p of clipPaths) args.input(p);
+
+    // Per-clip normalisation: scale/crop to W×H, fixed fps, drawtext caption.
+    let filter = "";
+    for (let i = 0; i < input.clips.length; i++) {
+      const cap = safeDrawtext(input.captions[i] ?? "");
+      const drawtext = cap
+        ? `,drawtext=text='${cap}':fontcolor=white:fontsize=40:x=(w-text_w)/2:y=h-160:shadowcolor=black@0.7:shadowx=2:shadowy=2:box=1:boxcolor=black@0.45:boxborderw=12`
+        : "";
+      filter +=
+        `[${i}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,` +
+        `crop=${W}:${H},setsar=1,fps=30,format=yuv420p${drawtext}[v${i}];`;
+    }
+
+    let lastLabel = "v0";
+    if (input.clips.length === 1) {
+      filter += `[v0]null[vout];`;
+      lastLabel = "vout";
+    } else {
+      let runningOffset = 0;
+      for (let i = 0; i < input.clips.length - 1; i++) {
+        runningOffset += durations[i] - transitionSec;
+        const outLabel = i === input.clips.length - 2 ? "vout" : `mix${i}`;
+        filter +=
+          `[${lastLabel}][v${i + 1}]xfade=transition=${transition}:` +
+          `duration=${transitionSec}:offset=${runningOffset.toFixed(3)}[${outLabel}];`;
+        lastLabel = outLabel;
+      }
+    }
+
+    const finalPath = path.join(tmpRoot, "final.mp4");
+    args
+      .complexFilter(filter.replace(/;$/, ""))
+      .outputOptions([
+        "-map", `[${lastLabel}]`,
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-r", "30",
+        "-preset", "veryfast",
+        "-crf", "22",
+        "-movflags", "+faststart",
+        "-t", totalDuration.toFixed(3),
+      ])
+      .output(finalPath);
+
+    await new Promise<void>((resolve, reject) => {
+      args
+        .on("end", () => resolve())
+        .on("error", (err) => reject(new Error(`ffmpeg montage: ${err.message}`)))
+        .run();
+    });
+
+    return await fs.readFile(finalPath);
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export async function renderSlideshow(input: RenderInput): Promise<Buffer> {
   if (!ffmpegPath) throw new Error("ffmpeg-static binary not found");
   if (input.frames.length === 0) throw new Error("No frames to render");

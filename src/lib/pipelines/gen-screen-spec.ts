@@ -10,6 +10,7 @@ import {
   safeParseBlocks,
 } from "@/lib/schemas/screen";
 import { getTrackContext } from "./_helpers";
+import { mockEditScreen } from "./mock-edit-screen";
 
 interface Input {
   trackId: string;
@@ -23,6 +24,11 @@ interface Input {
    * screen using this instruction instead of generating from scratch.
    */
   editInstruction?: string;
+  /**
+   * Optional: when set with editInstruction, the LLM is told to only modify
+   * blocks at these indices and pass the rest through verbatim.
+   */
+  selectedBlockIndices?: number[];
 }
 
 interface Output {
@@ -176,14 +182,20 @@ registerHandler<Input, Output>("GEN_SCREEN_SPEC", async (input, ctx) => {
 
     const existing = editing ? bundle.screens.find((s) => s.name === name) ?? null : null;
 
+    const selection = input.selectedBlockIndices?.filter(
+      (i) => Number.isInteger(i) && existing && i >= 0 && i < existing.blocks.length
+    );
+    const hasSelection = !!selection && selection.length > 0;
+
     const response = await chatJson<ScreenSpec>(
       existing
         ? {
-            system:
-              "You revise a single screen of a software demo. The user gives you the CURRENT screen spec as JSON and an edit instruction. Output the FULL updated ScreenSpec JSON, preserving anything the instruction does not change. Keep the same name. Blocks may be Hero, Stats, Table, Form, Chart, Card, List, Detail. ctaTo/submitTo/to fields must reference one of the provided screen names.",
-            user: `APP: ${spec.name} - ${spec.tagline}\nALL SCREENS: ${spec.screens.join(", ")}\nSCREEN NAME: ${name}\n\nCURRENT SCREEN JSON:\n${JSON.stringify(existing, null, 2)}\n\nEDIT INSTRUCTION: ${input.editInstruction}\n\nReturn the full updated screen as JSON {name: "${name}", title, navLabel, blocks: [...]}.`,
+            system: hasSelection
+              ? "You revise a single screen of a software demo. The user selected specific block indices to change. Output the FULL updated ScreenSpec JSON: every block whose index is NOT in SELECTED_INDICES must be returned verbatim from CURRENT SCREEN JSON. Only the selected blocks may be modified. Keep the same name. Block types: Hero, Stats, Table, Form, Chart, Card, List, Detail. ctaTo/submitTo/to must reference a provided screen name."
+              : "You revise a single screen of a software demo. The user gives you the CURRENT screen spec as JSON and an edit instruction. Output the FULL updated ScreenSpec JSON, preserving anything the instruction does not change. Keep the same name. Blocks may be Hero, Stats, Table, Form, Chart, Card, List, Detail. ctaTo/submitTo/to fields must reference one of the provided screen names.",
+            user: `APP: ${spec.name} - ${spec.tagline}\nALL SCREENS: ${spec.screens.join(", ")}\nSCREEN NAME: ${name}\n\nCURRENT SCREEN JSON:\n${JSON.stringify(existing, null, 2)}\n${hasSelection ? `\nSELECTED_INDICES: ${JSON.stringify(selection)}\n` : ""}\nEDIT INSTRUCTION: ${input.editInstruction}\n\nReturn the full updated screen as JSON {name: "${name}", title, navLabel, blocks: [...]}.`,
             jsonSchema: ScreenSpecSchema,
-            mockResponse: existing,
+            mockResponse: mockEditScreen(existing, input.editInstruction ?? "", selection),
           }
         : {
             system:
@@ -219,7 +231,14 @@ registerHandler<Input, Output>("GEN_SCREEN_SPEC", async (input, ctx) => {
       contentJson: JSON.stringify(bundle),
       meta: JSON.stringify({
         screensUpdated: targetScreens,
-        ...(editing ? { editInstruction: input.editInstruction } : {}),
+        ...(editing
+          ? {
+              editInstruction: input.editInstruction,
+              ...(input.selectedBlockIndices?.length
+                ? { selectedBlockIndices: input.selectedBlockIndices }
+                : {}),
+            }
+          : {}),
       }),
       createdBy: "ai",
     },

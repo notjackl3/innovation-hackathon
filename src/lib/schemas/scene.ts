@@ -11,6 +11,14 @@ export const SceneSchema = z.object({
   locked: z.boolean().default(false),
   frameStorageKey: z.string().nullable().default(null),
   audioStorageKey: z.string().nullable().default(null),
+  /** Storage key of the per-scene animated MP4 clip produced by Seedance. */
+  videoStorageKey: z.string().nullable().default(null),
+  /**
+   * Action description fed to the image-to-video model. Describes what the
+   * protagonist DOES during the clip (the "motion arc"), in addition to the
+   * imagePrompt which describes the starting framing.
+   */
+  motionPrompt: z.string().nullable().default(null),
 });
 export type Scene = z.infer<typeof SceneSchema>;
 

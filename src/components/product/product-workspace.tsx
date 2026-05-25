@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { JobProgress, useJob } from "@/components/shared/job-progress";
+import { useJob } from "@/components/shared/job-progress";
+import { PipelineStepper, StepHeader, StepNav } from "@/components/shared/pipeline-stepper";
 import { safeJson } from "@/lib/utils";
 import { SketchCanvas, type SketchCanvasHandle } from "./sketch-canvas";
 import { MeshViewer } from "./mesh-viewer";
@@ -37,21 +38,27 @@ export function ProductWorkspace({
   const [artifacts, setArtifacts] = useState(initialArtifacts);
   const [sketchJobId, setSketchJobId] = useState<string | null>(null);
   const [refineJobId, setRefineJobId] = useState<string | null>(null);
+  const [regenJobId, setRegenJobId] = useState<string | null>(null);
   const [meshJobId, setMeshJobId] = useState<string | null>(null);
   const [meshPollJobId, setMeshPollJobId] = useState<string | null>(null);
   const [refineInstruction, setRefineInstruction] = useState("");
+  // When set, the main MeshViewer shows this version's GLB instead of the
+  // current one — without committing the choice. Lets the user "try on" a
+  // previous version before deciding to revert.
+  const [previewMeshVersionId, setPreviewMeshVersionId] = useState<string | null>(null);
   const canvasRef = useRef<SketchCanvasHandle>(null);
   const sketchJob = useJob(sketchJobId);
   const refineJob = useJob(refineJobId);
+  const regenJob = useJob(regenJobId);
   const meshJob = useJob(meshJobId);
   const meshPollJob = useJob(meshPollJobId);
 
   // Sync from server when jobs succeed
   useEffect(() => {
-    if (sketchJob?.status === "SUCCEEDED" || refineJob?.status === "SUCCEEDED" || meshJob?.status === "SUCCEEDED" || meshPollJob?.status === "SUCCEEDED") {
+    if (sketchJob?.status === "SUCCEEDED" || refineJob?.status === "SUCCEEDED" || regenJob?.status === "SUCCEEDED" || meshJob?.status === "SUCCEEDED" || meshPollJob?.status === "SUCCEEDED") {
       void refresh();
     }
-  }, [sketchJob?.status, refineJob?.status, meshJob?.status, meshPollJob?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sketchJob?.status, refineJob?.status, regenJob?.status, meshJob?.status, meshPollJob?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Pick up the spawned poll job from the submit job's output
   useEffect(() => {
@@ -125,6 +132,28 @@ export function ProductWorkspace({
     await refresh();
   }
 
+  async function regenerateSketchFromDrawing() {
+    if (!sketchArtifact || !currentSketchVersion) return;
+    if (!canvasRef.current?.hasStrokes()) {
+      alert("Draw on the sketch first, then click Regenerate sketch.");
+      return;
+    }
+    const editedCanvasBase64 = await canvasRef.current.exportComposite();
+    const res = await fetch(`/api/tracks/${trackId}/product/sketches/regenerate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        artifactId: sketchArtifact.id,
+        parentVersionId: currentSketchVersion.id,
+        editedCanvasBase64,
+      }),
+    });
+    if (!res.ok) return;
+    const { jobId } = (await res.json()) as { jobId: string };
+    setRegenJobId(jobId);
+    canvasRef.current?.clear();
+  }
+
   async function refineSketch() {
     if (!sketchArtifact || !currentSketchVersion) return;
     let editedCanvasBase64: string | undefined;
@@ -191,71 +220,64 @@ export function ProductWorkspace({
     await refresh();
   }
 
-  const meshUrl = currentMeshVersion?.storageKey
-    ? `/api/storage/${currentMeshVersion.storageKey}`
+  const previewMeshVersion = useMemo(() => {
+    if (!previewMeshVersionId || !meshArtifact) return null;
+    return meshArtifact.versions.find((v) => v.id === previewMeshVersionId) ?? null;
+  }, [previewMeshVersionId, meshArtifact]);
+  const displayedMeshVersion = previewMeshVersion ?? currentMeshVersion;
+  const meshUrl = displayedMeshVersion?.storageKey
+    ? `/api/storage/${displayedMeshVersion.storageKey}`
     : null;
   const meshPending = !!meshJobId && (!currentMeshVersion?.storageKey);
 
+  const sketchDone = !!sketchArtifact && sketchArtifact.versions.some((v) => !!v.storageKey);
+  const refineDone = !!sketchArtifact && sketchArtifact.versions.some((v) => !!v.parentVersionId);
+  const meshDone = !!meshArtifact && meshArtifact.versions.some((v) => !!v.storageKey);
+
+  const steps = [
+    { key: "sketch", label: "Concept sketches", hint: "Pick the closest one", done: sketchDone },
+    { key: "refine", label: "Refine the sketch", hint: "Draw or describe changes", done: refineDone },
+    { key: "mesh", label: "3D model", hint: "Make it rotatable", done: meshDone },
+  ];
+
+  // Initial step: first not-done step. Only computed once at mount; after that
+  // the user drives navigation.
+  const initialStep = useMemo(() => {
+    const i = [sketchDone, refineDone, meshDone].findIndex((d) => !d);
+    return i === -1 ? 0 : i;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [activeStep, setActiveStep] = useState(initialStep);
+
   return (
     <div className="space-y-6">
-      <Card>
-        <CardContent className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-lg font-semibold">Concept sketches</h2>
-            <p className="text-sm text-muted-foreground">
-              Generate variations, draw on top, then convert the chosen sketch to 3D.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            {sketchJobId && <JobProgress job={sketchJob} className="w-44" />}
-            <Button onClick={() => generateSketches(4)}>Generate 4 variations</Button>
-          </div>
-        </CardContent>
-      </Card>
+      <PipelineStepper steps={steps} activeIndex={activeStep} onSelect={setActiveStep} />
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+      {activeStep === 0 && (
         <Card>
-          <CardContent className="space-y-4 p-5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Edit sketch
-              </h3>
-              {refineJobId && <JobProgress job={refineJob} className="w-40" />}
-            </div>
-            {currentSketchVersion?.storageKey ? (
-              <SketchCanvas
-                ref={canvasRef}
-                backgroundUrl={`/api/storage/${currentSketchVersion.storageKey}`}
-              />
-            ) : (
-              <div className="grid aspect-square place-items-center rounded-md border bg-muted text-sm text-muted-foreground">
-                No sketch yet — generate one above.
-              </div>
-            )}
-            <div className="flex gap-2">
-              <Input
-                placeholder='Refine instruction, e.g. "add a leather strap and matte texture"'
-                value={refineInstruction}
-                onChange={(e) => setRefineInstruction(e.target.value)}
-              />
-              <Button
-                onClick={refineSketch}
-                disabled={!currentSketchVersion || !refineInstruction.trim()}
-              >
-                AI refine
+          <CardContent className="space-y-5 p-5">
+            <StepHeader
+              index={0}
+              total={steps.length}
+              title="Generate concept sketches"
+              description="Spark will draw a few rough product concepts. Pick the variation closest to your idea — you can refine it in the next step."
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={() => generateSketches(4)}>
+                {sketchDone ? "Generate 4 more variations" : "Generate 4 variations"}
               </Button>
+              {sketchDone && (
+                <span className="text-xs text-muted-foreground">
+                  Click a thumbnail below to select it as your working sketch.
+                </span>
+              )}
             </div>
-          </CardContent>
-        </Card>
 
-        <div className="space-y-4">
-          <Card>
-            <CardContent className="space-y-3 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Versions
-              </div>
-              {sketchArtifact && sketchArtifact.versions.length > 0 ? (
-                <div className="grid grid-cols-3 gap-2">
+            {sketchArtifact && sketchArtifact.versions.length > 0 ? (
+              <div>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Variations · click to select
+                </div>
+                <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
                   {sketchArtifact.versions.slice(0, 12).map((v) => {
                     const meta = safeJson<{ variationIndex?: number }>(v.meta, {});
                     const isActive = sketchArtifact.currentVersionId === v.id;
@@ -300,54 +322,170 @@ export function ProductWorkspace({
                     );
                   })}
                 </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">No variations yet.</p>
-              )}
-            </CardContent>
-          </Card>
+              </div>
+            ) : (
+              <p className="rounded-md border border-dashed bg-muted/30 p-6 text-center text-sm text-muted-foreground">
+                No sketches yet. Click <strong>Generate 4 variations</strong> to start.
+              </p>
+            )}
 
-          <Card>
-            <CardContent className="space-y-3 p-4">
-              <div className="flex items-center justify-between">
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  3D model
-                </div>
-                <div className="flex items-center gap-2">
-                  {meshJobId && <JobProgress job={meshJob} className="w-28" />}
-                  {meshPollJobId && <JobProgress job={meshPollJob} className="w-28" />}
+            <StepNav
+              onNext={() => setActiveStep(1)}
+              nextLabel="Next: refine the sketch"
+              nextDisabled={!sketchDone}
+              hint={!sketchDone ? "Generate at least one sketch to continue." : undefined}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {activeStep === 1 && (
+        <Card>
+          <CardContent className="space-y-5 p-5">
+            <StepHeader
+              index={1}
+              total={steps.length}
+              title="Refine the sketch"
+              description="Draw on top of the sketch to mark changes, or describe what to tweak in words. Skip this step if your concept is already where you want it."
+            />
+
+            {currentSketchVersion?.storageKey ? (
+              <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+                <SketchCanvas
+                  ref={canvasRef}
+                  backgroundUrl={`/api/storage/${currentSketchVersion.storageKey}`}
+                />
+                <div className="space-y-3">
+                  <div className="rounded-md border bg-muted/30 p-3">
+                    <div className="text-xs font-semibold">Option A · Describe a change</div>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Type what should change. Spark redraws the sketch.
+                    </p>
+                    <Input
+                      placeholder='e.g. "add a leather strap and matte texture"'
+                      value={refineInstruction}
+                      onChange={(e) => setRefineInstruction(e.target.value)}
+                      className="mt-2"
+                    />
+                    <Button
+                      onClick={refineSketch}
+                      disabled={!currentSketchVersion || !refineInstruction.trim()}
+                      className="mt-2 w-full"
+                      size="sm"
+                    >
+                      AI refine
+                    </Button>
+                  </div>
+                  <div className="rounded-md border bg-muted/30 p-3">
+                    <div className="text-xs font-semibold">Option B · Draw the change</div>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Sketch on the canvas to mark up; Spark renders a clean version.
+                    </p>
+                    <Button
+                      onClick={regenerateSketchFromDrawing}
+                      disabled={!currentSketchVersion}
+                      variant="secondary"
+                      size="sm"
+                      className="mt-2 w-full"
+                    >
+                      Regenerate from drawing
+                    </Button>
+                  </div>
                 </div>
               </div>
-              <MeshViewer glbUrl={meshUrl} pending={meshPending} />
-              <Button
-                onClick={generateMesh}
-                disabled={!currentSketchVersion}
-                className="w-full"
-                variant="outline"
-              >
-                {currentMeshVersion?.storageKey ? "Regenerate 3D from sketch" : "Generate 3D from sketch"}
-              </Button>
-              {meshArtifact && meshArtifact.versions.length > 0 && (
-                <div className="space-y-2">
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    History ({meshArtifact.versions.length})
+            ) : (
+              <p className="rounded-md border border-dashed bg-muted/30 p-6 text-center text-sm text-muted-foreground">
+                Pick a sketch in step 1 first.
+              </p>
+            )}
+
+            <StepNav
+              onBack={() => setActiveStep(0)}
+              onNext={() => setActiveStep(2)}
+              nextLabel="Next: generate 3D model"
+              nextDisabled={!sketchDone}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {activeStep === 2 && (
+        <Card>
+          <CardContent className="space-y-5 p-5">
+            <StepHeader
+              index={2}
+              total={steps.length}
+              title="Turn it into a 3D model"
+              description="Convert your final sketch into a rotatable 3D model (GLB). Takes about a minute."
+            />
+
+            <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+              <div className="space-y-3">
+                <MeshViewer glbUrl={meshUrl} pending={meshPending} />
+                {previewMeshVersion && previewMeshVersionId !== meshArtifact?.currentVersionId && (
+                  <div className="flex items-center justify-between rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px]">
+                    <span className="text-amber-900">
+                      Previewing an older version (not current).
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewMeshVersionId(null)}
+                      className="rounded border border-amber-300 px-2 py-0.5 text-amber-900 hover:bg-amber-100"
+                    >
+                      Stop preview
+                    </button>
                   </div>
+                )}
+                <Button
+                  onClick={generateMesh}
+                  disabled={!currentSketchVersion}
+                  className="w-full"
+                >
+                  {currentMeshVersion?.storageKey ? "Regenerate 3D from sketch" : "Generate 3D from sketch"}
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  History {meshArtifact ? `(${meshArtifact.versions.length})` : ""}
+                </div>
+                {meshArtifact && meshArtifact.versions.length > 0 ? (
                   <ul className="space-y-1">
                     {meshArtifact.versions.slice(0, 8).map((v, i) => {
                       const isActive = meshArtifact.currentVersionId === v.id;
+                      const isPreviewing = previewMeshVersionId === v.id;
                       const ready = !!v.storageKey;
                       const label = `v${meshArtifact.versions.length - i}`;
                       const time = new Date(v.createdAt).toLocaleTimeString([], {
                         hour: "2-digit",
                         minute: "2-digit",
                       });
+                      const meshMeta = safeJson<{ thumbnailUrl?: string }>(v.meta, {});
+                      const thumb = meshMeta.thumbnailUrl;
                       return (
                         <li
                           key={v.id}
-                          className={`flex items-center justify-between gap-2 rounded border px-2 py-1 text-xs ${
-                            isActive ? "border-primary bg-primary/5" : ""
+                          className={`flex items-center gap-2 rounded border px-2 py-1 text-xs ${
+                            isPreviewing
+                              ? "border-amber-400 bg-amber-50"
+                              : isActive
+                                ? "border-primary bg-primary/5"
+                                : ""
                           }`}
                         >
-                          <span className="flex items-center gap-2">
+                          {ready && thumb ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={thumb}
+                              alt={`${label} thumbnail`}
+                              className="h-10 w-10 shrink-0 rounded border bg-neutral-100 object-cover"
+                            />
+                          ) : (
+                            <div className="grid h-10 w-10 shrink-0 place-items-center rounded border bg-muted text-[9px] text-muted-foreground">
+                              {ready ? "GLB" : "…"}
+                            </div>
+                          )}
+                          <span className="flex flex-1 items-center gap-2">
                             <span className="font-mono">{label}</span>
                             <span className="text-muted-foreground">{time}</span>
                             {!ready && (
@@ -355,6 +493,19 @@ export function ProductWorkspace({
                             )}
                           </span>
                           <span className="flex items-center gap-1">
+                            {ready && !isActive && (
+                              <button
+                                onClick={() =>
+                                  setPreviewMeshVersionId(isPreviewing ? null : v.id)
+                                }
+                                className={`rounded border px-2 py-0.5 text-[10px] hover:bg-muted ${
+                                  isPreviewing ? "border-amber-400 bg-amber-100" : ""
+                                }`}
+                                title="Load this version into the 3D viewer without committing"
+                              >
+                                {isPreviewing ? "Stop" : "Preview"}
+                              </button>
+                            )}
                             {ready && (
                               <a
                                 href={`/api/storage/${v.storageKey}`}
@@ -366,7 +517,10 @@ export function ProductWorkspace({
                             )}
                             {!isActive && ready && (
                               <button
-                                onClick={() => chooseMeshVersion(v.id)}
+                                onClick={() => {
+                                  setPreviewMeshVersionId(null);
+                                  chooseMeshVersion(v.id);
+                                }}
                                 className="rounded border px-2 py-0.5 text-[10px] hover:bg-muted"
                               >
                                 Revert
@@ -378,7 +532,10 @@ export function ProductWorkspace({
                               </Badge>
                             )}
                             <button
-                              onClick={() => deleteMeshVersion(v.id, label)}
+                              onClick={() => {
+                                if (isPreviewing) setPreviewMeshVersionId(null);
+                                deleteMeshVersion(v.id, label);
+                              }}
                               className="rounded border border-red-300 px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-50"
                               title="Delete this version permanently"
                             >
@@ -389,12 +546,18 @@ export function ProductWorkspace({
                       );
                     })}
                   </ul>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    No 3D models yet. Generate one to populate this list.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <StepNav onBack={() => setActiveStep(1)} backLabel="Back to refine" />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

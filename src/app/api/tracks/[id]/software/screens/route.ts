@@ -8,6 +8,7 @@ const Body = z.object({
   onlyScreen: z.string().optional(),
   bundleArtifactId: z.string().optional(),
   editInstruction: z.string().trim().min(1).optional(),
+  selectedBlockIndices: z.array(z.number().int().nonnegative()).optional(),
 });
 
 export async function POST(
@@ -25,6 +26,7 @@ export async function POST(
       onlyScreen: body.data.onlyScreen,
       bundleArtifactId: body.data.bundleArtifactId,
       editInstruction: body.data.editInstruction,
+      selectedBlockIndices: body.data.selectedBlockIndices,
     },
     trackId,
   });

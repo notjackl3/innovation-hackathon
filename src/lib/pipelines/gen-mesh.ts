@@ -1,11 +1,11 @@
 import { prisma } from "@/lib/db";
 import { registerHandler, enqueueJob } from "@/lib/jobs/runner";
 import { createMeshyTask, pollMeshyTask } from "@/lib/ai/meshy";
-import { generateImages } from "@/lib/ai/image";
-import { openai, isMockMode } from "@/lib/ai/openai";
+import { isMockMode } from "@/lib/ai/openai";
 import { getStorage } from "@/lib/storage";
 import { mockGlb } from "@/lib/ai/mock-assets";
-import { getTrackContext, brandPromptPrefix } from "./_helpers";
+import { getTrackContext } from "./_helpers";
+import { renderAnnotatedSketch } from "./_render-annotated-sketch";
 
 interface SubmitInput {
   trackId: string;
@@ -28,92 +28,30 @@ registerHandler<SubmitInput, SubmitOutput>("GEN_MESH_SUBMIT", async (input, ctx)
 
   const storage = getStorage();
 
-  // If the source is a user-annotated composite (raw strokes drawn on top of
-  // a sketch), Meshy treats the thin lines as 2D noise and ignores them. We
-  // need a CLEAN, fully-rendered image where the user's edit reads as actual
-  // geometry — otherwise the crown/horns/etc. simply don't appear in the GLB.
-  //
-  // Approach: describe-then-generate.
-  //   1) Send the composite to GPT-4o vision and ask it to describe the
-  //      product AND the user's annotation in detail (what it is, where it
-  //      attaches, what material it should be).
-  //   2) Feed that description into gpt-image-1 IMAGE GENERATE (not edit) to
-  //      produce a fresh photoreal-style product render where the addition
-  //      is a real 3D-looking part of the object.
-  //   3) Save as a new sketch version and use that as the Meshy source.
-  //
-  // We use generate (not edit) because edit preserves the input too aggressively
-  // and often erases rough strokes rather than interpreting them as features.
+  // Meshy interprets bold dark sketch outlines as dark material on the 3D
+  // surface (turning a white sketched headset into a black 3D headset). We
+  // need to feed it a PHOTOREAL image with no sketch lines. Run the photoreal
+  // edit pass whenever the source is either:
+  //   - "user-annotated" (raw composite of sketch + user strokes), or
+  //   - "ai-rendered-from-annotation" (match-source sketch-style integrated
+  //     output from the Regenerate-sketch action — still has sketch lines).
+  // Skip if the source is already photoreal-prepped (or in mock mode).
   const sourceMetaForCheck = source.meta
     ? (JSON.parse(source.meta) as { source?: string })
     : {};
-  if (sourceMetaForCheck.source === "user-annotated" && source.storageKey && !isMockMode()) {
-    await ctx.log("Source is user-annotated — running describe+generate so Meshy can read the addition as real geometry.");
-    await ctx.setProgress(5);
-
-    const inBytes = await storage.get(source.storageKey);
-    const dataUrl = `data:image/png;base64,${inBytes.toString("base64")}`;
-
-    // Step 1: vision-describe the composite
-    const visionResponse = await openai().chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a product designer. The user provides a product concept image with rough hand-drawn annotations on top (lines, shapes, marks in a contrasting color). Your job is to write a single tight image-generation prompt for a NEW image that depicts the SAME product with the user's annotation rendered as a real, three-dimensional part of the object (proper materials, shading, attachment, perspective). Describe: the product (form, color, material, key features); the annotation (what it appears to depict, where it attaches, suggested material and proportions to make it look natural); pose/angle/background to match the original. Output only the prompt — no preamble.",
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: "Write the image-generation prompt for this annotated concept.",
-            },
-            { type: "image_url", image_url: { url: dataUrl } },
-          ],
-        },
-      ],
-      temperature: 0.4,
+  const needsPhotorealPrep =
+    sourceMetaForCheck.source === "user-annotated" ||
+    sourceMetaForCheck.source === "ai-rendered-from-annotation";
+  if (needsPhotorealPrep && source.storageKey && !isMockMode()) {
+    await ctx.log(`Source is "${sourceMetaForCheck.source}" — running photoreal edit so Meshy sees real surface shading, not sketch lines.`);
+    source = await renderAnnotatedSketch({
+      sourceVersionId: source.id,
+      pathPrefix: `companies/${ideaRecord.companyId}/ideas/${ideaRecord.id}/tracks/${track.id}/sketches`,
+      company,
+      mode: "photoreal-render",
+      onProgress: (pct) => ctx.setProgress(Math.min(15, Math.floor(pct / 2))),
+      onLog: (msg) => ctx.log(msg),
     });
-    const description =
-      visionResponse.choices[0]?.message?.content?.trim() ??
-      "A clean product render incorporating the user's annotation.";
-    await ctx.log(`Vision prompt: ${description.slice(0, 200)}${description.length > 200 ? "…" : ""}`);
-    await ctx.setProgress(12);
-
-    // Step 2: generate a fresh image from the description
-    const generatePrompt = `${brandPromptPrefix(company)} ${description} Render as a clean single-object product concept on a neutral background, no logos or text, no sketch lines or annotations, photoreal-style shading, centered three-quarter view.`;
-    const [generated] = await generateImages({
-      prompt: generatePrompt,
-      n: 1,
-      seed: `${source.id}-rendered`,
-    });
-    if (!generated) throw new Error("Image generation returned no result");
-
-    const renderedExt = generated.contentType.includes("svg") ? "svg" : "png";
-    const renderedKey = `companies/${ideaRecord.companyId}/ideas/${ideaRecord.id}/tracks/${track.id}/sketches/${source.artifactId}-rendered-${Date.now()}.${renderedExt}`;
-    await storage.put(renderedKey, generated.bytes, generated.contentType);
-    const renderedVersion = await prisma.artifactVersion.create({
-      data: {
-        artifactId: source.artifactId,
-        parentVersionId: source.id,
-        storageKey: renderedKey,
-        meta: JSON.stringify({
-          source: "ai-rendered-from-annotation",
-          contentType: generated.contentType,
-          generatePrompt,
-          visionDescription: description,
-        }),
-        createdBy: "ai",
-      },
-    });
-    await prisma.artifact.update({
-      where: { id: source.artifactId },
-      data: { currentVersionId: renderedVersion.id },
-    });
-    source = renderedVersion;
-    await ctx.log(`Rendered sketch saved as version ${renderedVersion.id}.`);
   }
 
   // Meshy accepts http(s) URL OR base64 data URI. Use data URI in dev so it

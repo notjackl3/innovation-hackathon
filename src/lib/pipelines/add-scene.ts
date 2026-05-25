@@ -104,6 +104,8 @@ Write a single new scene that fits naturally at position ${insertAt + 1}. Return
     locked: false,
     frameStorageKey: null,
     audioStorageKey: null,
+    videoStorageKey: null,
+    motionPrompt: null,
   };
 
   const reindexed: Scene[] = [

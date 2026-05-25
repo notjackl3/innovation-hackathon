@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { JobProgress, useJob } from "@/components/shared/job-progress";
+import { useJob } from "@/components/shared/job-progress";
 
 export function TriageRunner({
   ideaId,
@@ -54,7 +54,6 @@ export function TriageRunner({
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {jobId && <JobProgress job={job} className="w-48" />}
           <Button size="sm" variant={triaged ? "outline" : "default"} onClick={run}>
             {triaged ? "Re-run triage" : "Run triage"}
           </Button>

@@ -2,16 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { publishJob, type JobSnapshot } from "@/lib/jobs/jobs-store";
 
-export interface JobSnapshot {
-  id: string;
-  kind: string;
-  status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
-  progress: number;
-  logs: string[];
-  output: unknown;
-  error?: string | null;
-}
+export type { JobSnapshot } from "@/lib/jobs/jobs-store";
 
 export function useJob(jobId: string | null | undefined) {
   const [job, setJob] = useState<JobSnapshot | null>(null);
@@ -24,6 +17,7 @@ export function useJob(jobId: string | null | undefined) {
       if (res.ok) {
         const data = (await res.json()) as JobSnapshot;
         setJob(data);
+        publishJob(data);
         if (data.status === "SUCCEEDED" || data.status === "FAILED") {
           if (!stop) timer = setTimeout(tick, 4000); // keep polling slowly in case of follow-ups
           return;
