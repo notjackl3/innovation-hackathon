@@ -72,7 +72,9 @@ export function RevealStagger({
   );
 }
 
-function StaggerItem({ children, className }: { children: ReactNode; className?: string }) {
+/** Stagger child. Use as a named export (works across the RSC boundary, unlike a
+ * static property on the client component, which server components can't read). */
+export function RevealItem({ children, className }: { children: ReactNode; className?: string }) {
   const reduce = useReducedMotion();
   return (
     <motion.div className={className} variants={reduce ? undefined : itemVariants}>
@@ -81,4 +83,4 @@ function StaggerItem({ children, className }: { children: ReactNode; className?:
   );
 }
 
-RevealStagger.Item = StaggerItem;
+RevealStagger.Item = RevealItem;

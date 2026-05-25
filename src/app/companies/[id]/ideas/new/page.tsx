@@ -2,12 +2,13 @@
 
 import { use, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { AppHeader } from "@/components/shared/app-header";
+import { PageHeader } from "@/components/shared/page-header";
 
 export default function NewIdeaPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: companyId } = use(params);
@@ -37,16 +38,19 @@ export default function NewIdeaPage({ params }: { params: Promise<{ id: string }
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-12">
-      <Link href={`/companies/${companyId}`} className="text-xs text-muted-foreground hover:text-foreground">
-        ← Back to company
-      </Link>
-      <h1 className="mt-1 mb-8 text-2xl font-semibold tracking-tight">New idea</h1>
+    <>
+      <AppHeader />
+      <main className="relative mx-auto max-w-2xl px-6 py-12">
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-64 bg-grain opacity-50" />
+        <PageHeader
+          backHref={`/companies/${companyId}`}
+          backLabel="Back to company"
+          eyebrow="New idea"
+          title="Describe the idea"
+          subtitle="Spark will triage it and route it to the right pipeline."
+        />
       <Card>
-        <CardHeader>
-          <CardTitle>Describe the idea</CardTitle>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           <form onSubmit={onSubmit} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="title">Title</Label>
@@ -76,6 +80,7 @@ export default function NewIdeaPage({ params }: { params: Promise<{ id: string }
           </form>
         </CardContent>
       </Card>
-    </main>
+      </main>
+    </>
   );
 }
